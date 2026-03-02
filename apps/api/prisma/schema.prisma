@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== USERS ==========
+model User {
+  id           String        @id @default(cuid())
+  name         String
+  email        String        @unique
+  password     String
+  role         Role          @default(CASHIER)
+  branchId     String?
+  branch       Branch?       @relation(fields: [branchId], references: [id])
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+// ========== BRANCHES ==========
+model Branch {
+  id           String        @id @default(cuid())
+  name         String
+  address      String?
+  phone        String?
+  users        User[]
+  products     Product[]
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+// ========== CATEGORIES ==========
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  products  Product[]
+  createdAt DateTime  @default(now())
+}
+
+// ========== PRODUCTS ==========
+model Product {
+  id               String            @id @default(cuid())
+  name             String
+  barcode          String?           @unique
+  price            Float
+  stock            Int               @default(0)
+  categoryId       String?
+  category         Category?         @relation(fields: [categoryId], references: [id])
+  branchId         String?
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  transactionItems TransactionItem[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+// ========== TRANSACTIONS ==========
+model Transaction {
+  id            String            @id @default(cuid())
+  invoiceNo     String            @unique
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  branchId      String
+  branch        Branch            @relation(fields: [branchId], references: [id])
+  items         TransactionItem[]
+  subtotal      Float
+  discount      Float             @default(0)
+  tax           Float             @default(0)
+  total         Float
+  paymentMethod PaymentMethod     @default(CASH)
+  amountPaid    Float
+  change        Float             @default(0)
+  status        TransactionStatus @default(COMPLETED)
+  createdAt     DateTime          @default(now())
+}
+
+model TransactionItem {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id])
+  quantity      Int
+  price         Float
+  subtotal      Float
+}
+
+enum PaymentMethod {
+  CASH
+  QRIS
+  TRANSFER
+  CARD
+}
+
+enum TransactionStatus {
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}

@@ -1,0 +1,30 @@
+{
+  "name": "pos-system",
+  "private": true,
+  "packageManager": "npm@11.9.0",
+
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "prisma": "^7.4.2",
+    "tsx": "^4.21.0",
+    "turbo": "latest",
+    "typescript": "^5.9.3"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/jwt": "^10.0.0",
+    "@prisma/client": "^7.4.2",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.7.4"
+  }
+}
