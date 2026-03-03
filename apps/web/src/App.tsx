@@ -7,12 +7,17 @@ import Categories from './pages/Categories'
 import Branches from './pages/Branches'
 import Transactions from './pages/Transactions'
 import Reports from './pages/Reports'
+import CustomerDisplay from './pages/CustomerDisplay'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Public routes */}
         <Route path="/login" element={<Login />} />
+        <Route path="/display" element={<CustomerDisplay />} />
+
+        {/* Protected routes */}
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/products" element={<Products />} />
@@ -21,6 +26,7 @@ export default function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/reports" element={<Reports />} />
         </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

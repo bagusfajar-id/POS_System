@@ -20,6 +20,7 @@ export default function Sidebar() {
     { to: '/branches', icon: '⊕', label: 'Cabang', show: canManageBranches(role) },
     { to: '/transactions', icon: '⊟', label: 'Transaksi', show: true },
     { to: '/reports', icon: '◎', label: 'Laporan', show: canViewReports(role) },
+    { to: '/display', icon: '🖥', label: 'Customer Display', show: true },
   ]
 
   return (

@@ -110,58 +110,94 @@ export default async function reportRoutes(fastify: FastifyInstance) {
   })
 
   // GET /reports/summary — dashboard summary
-  fastify.get('/reports/summary', {
-    preHandler: authorizeRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
-  }, async (request, reply) => {
-    const { branchId } = request.query as { branchId?: string }
+fastify.get('/reports/summary', {
+  preHandler: authorizeRoles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')
+}, async (request, reply) => {
+  const { branchId } = request.query as { branchId?: string }
 
-    const today = new Date()
-    const startOfToday = new Date(today.setHours(0, 0, 0, 0))
+  const today = new Date()
+  const startOfToday = new Date(today)
+  startOfToday.setHours(0, 0, 0, 0)
+  const endOfToday = new Date(today)
+  endOfToday.setHours(23, 59, 59, 999)
 
-    const [
-      todayRevenue,
-      totalProducts,
-      lowStockProducts,
-      totalBranches,
-      recentTransactions
-    ] = await Promise.all([
-      fastify.prisma.transaction.aggregate({
+  // Ambil monthly data 6 bulan terakhir
+  const monthlyData = await Promise.all(
+    Array.from({ length: 6 }, async (_, i) => {
+      const d = new Date()
+      d.setMonth(d.getMonth() - (5 - i))
+      const start = new Date(d.getFullYear(), d.getMonth(), 1)
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
+      const result = await fastify.prisma.transaction.aggregate({
         where: {
-          createdAt: { gte: startOfToday },
+          createdAt: { gte: start, lte: end },
           status: 'COMPLETED',
           ...(branchId && { branchId })
         },
         _sum: { total: true },
         _count: true
-      }),
-      fastify.prisma.product.count({
-        where: { ...(branchId && { branchId }) }
-      }),
-      fastify.prisma.product.count({
-        where: {
-          stock: { lte: 5 },
-          ...(branchId && { branchId })
-        }
-      }),
-      fastify.prisma.branch.count(),
-      fastify.prisma.transaction.findMany({
-        where: { ...(branchId && { branchId }) },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: {
-          user: { select: { name: true } },
-          branch: { select: { name: true } }
-        }
       })
-    ])
-
-    return reply.send({
-      todayRevenue: todayRevenue._sum.total || 0,
-      todayTransactions: todayRevenue._count,
-      totalProducts,
-      lowStockProducts,
-      totalBranches,
-      recentTransactions
+      const months = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des']
+      return {
+        month: months[d.getMonth()],
+        revenue: result._sum.total || 0,
+        transactions: result._count
+      }
     })
+  )
+
+  const [
+    todayRevenue,
+    totalProducts,
+    lowStockProducts,
+    totalBranches,
+    recentTransactions
+  ] = await Promise.all([
+    fastify.prisma.transaction.aggregate({
+      where: {
+        createdAt: { gte: startOfToday, lte: endOfToday },
+        status: 'COMPLETED',
+        ...(branchId && { branchId })
+      },
+      _sum: { total: true },
+      _count: true
+    }),
+    fastify.prisma.product.count({
+      where: { ...(branchId && { branchId }) }
+    }),
+    fastify.prisma.product.count({
+      where: {
+        stock: { lte: 5 },
+        ...(branchId && { branchId })
+      }
+    }),
+    fastify.prisma.branch.count(),
+    fastify.prisma.transaction.findMany({
+      where: {
+        status: 'COMPLETED',
+        ...(branchId && { branchId })
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      include: {
+        user: { select: { name: true } },
+        branch: { select: { name: true } },
+        items: {
+          take: 3,
+          include: { product: { select: { name: true } } }
+        }
+      }
+    })
+  ])
+
+  return reply.send({
+    todayRevenue: todayRevenue._sum.total || 0,
+    todayTransactions: todayRevenue._count,
+    totalProducts,
+    lowStockProducts,
+    totalBranches,
+    recentTransactions,
+    monthlyData
   })
+})
 }

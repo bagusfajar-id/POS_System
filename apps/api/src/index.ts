@@ -1,6 +1,8 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
+import websocket from '@fastify/websocket'
+import multipart from '@fastify/multipart'
 import dotenv from 'dotenv'
 import prismaPlugin from './plugins/prisma'
 import authRoutes from './routes/auth'
@@ -9,6 +11,7 @@ import categoryRoutes from './routes/categories'
 import productRoutes from './routes/products'
 import transactionRoutes from './routes/transactions'
 import reportRoutes from './routes/reports'
+import customerDisplayRoutes from './routes/customerDisplay'
 
 dotenv.config()
 
@@ -16,7 +19,9 @@ const app = Fastify({ logger: true })
 
 // Plugins
 app.register(cors, {
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 })
 
@@ -24,6 +29,11 @@ app.register(jwt, {
   secret: process.env.JWT_SECRET || 'pos-secret-key'
 })
 
+app.register(multipart, {
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+})
+
+app.register(websocket)
 app.register(prismaPlugin)
 
 // Routes
@@ -33,6 +43,7 @@ app.register(categoryRoutes)
 app.register(productRoutes)
 app.register(transactionRoutes)
 app.register(reportRoutes)
+app.register(customerDisplayRoutes)
 
 // Health check
 app.get('/health', async () => {
