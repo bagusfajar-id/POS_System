@@ -12,12 +12,12 @@ import productRoutes from './routes/products'
 import transactionRoutes from './routes/transactions'
 import reportRoutes from './routes/reports'
 import customerDisplayRoutes from './routes/customerDisplay'
+import midtransRoutes from './routes/midtrans'
 
 dotenv.config()
 
 const app = Fastify({ logger: true })
 
-// Plugins
 app.register(cors, {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -30,13 +30,12 @@ app.register(jwt, {
 })
 
 app.register(multipart, {
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+  limits: { fileSize: 5 * 1024 * 1024 }
 })
 
 app.register(websocket)
 app.register(prismaPlugin)
 
-// Routes
 app.register(authRoutes)
 app.register(branchRoutes)
 app.register(categoryRoutes)
@@ -44,13 +43,12 @@ app.register(productRoutes)
 app.register(transactionRoutes)
 app.register(reportRoutes)
 app.register(customerDisplayRoutes)
+app.register(midtransRoutes)
 
-// Health check
 app.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() }
 })
 
-// Start
 const start = async () => {
   try {
     await app.listen({ port: Number(process.env.PORT) || 3001, host: '0.0.0.0' })

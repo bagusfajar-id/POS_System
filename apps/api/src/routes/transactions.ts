@@ -22,10 +22,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
     const where = {
       ...(effectiveBranchId && { branchId: effectiveBranchId }),
       ...(startDate && endDate && {
-        createdAt: {
-          gte: new Date(startDate),
-          lte: new Date(endDate)
-        }
+        createdAt: { gte: new Date(startDate), lte: new Date(endDate) }
       })
     }
 
@@ -36,9 +33,7 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
           user: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } },
           items: {
-            include: {
-              product: { select: { id: true, name: true } }
-            }
+            include: { product: { select: { id: true, name: true } } }
           }
         },
         orderBy: { createdAt: 'desc' },
@@ -76,21 +71,26 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
       }
     })
 
-    if (!transaction) {
-      return reply.status(404).send({ error: 'Transaction not found' })
-    }
-
+    if (!transaction) return reply.status(404).send({ error: 'Transaction not found' })
     return reply.send(transaction)
   })
 
   // POST /transactions
   fastify.post('/transactions', { preHandler: authenticate }, async (request, reply) => {
-    const { items, discount = 0, paymentMethod = 'CASH', amountPaid, branchId } = request.body as {
+    const {
+      items,
+      discount = 0,
+      paymentMethod = 'CASH',
+      amountPaid,
+      branchId,
+      invoiceNo: customInvoiceNo  // ← dari QRIS Midtrans
+    } = request.body as {
       items: { productId: string; quantity: number }[]
       discount?: number
       paymentMethod?: string
       amountPaid: number
       branchId: string
+      invoiceNo?: string
     }
 
     const user = request.user as { id: string; branchId?: string }
@@ -104,26 +104,21 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'Branch is required' })
     }
 
-    // Ambil semua produk sekaligus
     const productIds = items.map(i => i.productId)
     const products = await fastify.prisma.product.findMany({
       where: { id: { in: productIds } }
     })
 
-    // Validasi stok
     for (const item of items) {
       const product = products.find(p => p.id === item.productId)
-      if (!product) {
-        return reply.status(404).send({ error: `Product ${item.productId} not found` })
-      }
+      if (!product) return reply.status(404).send({ error: `Product ${item.productId} not found` })
       if (product.stock < item.quantity) {
         return reply.status(400).send({
-          error: `Insufficient stock for ${product.name}. Available: ${product.stock}`
+          error: `Stok ${product.name} tidak cukup. Tersisa: ${product.stock}`
         })
       }
     }
 
-    // Hitung total
     const transactionItems = items.map(item => {
       const product = products.find(p => p.id === item.productId)!
       return {
@@ -139,19 +134,24 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
     const total = subtotal - discount + tax
     const change = amountPaid - total
 
-    if (amountPaid < total) {
-      return reply.status(400).send({ error: 'Insufficient payment amount' })
+    if (amountPaid < total - 0.01) {
+      return reply.status(400).send({ error: 'Jumlah bayar kurang' })
     }
 
-    // Buat transaksi + update stok dalam satu database transaction
     const branch = await fastify.prisma.branch.findUnique({
       where: { id: effectiveBranchId }
     })
 
-    const invoiceNo = generateInvoiceNo(branch?.name.slice(0, 3) || 'POS')
+    // Pakai invoiceNo dari QRIS kalau ada, kalau tidak generate baru
+    const invoiceNo = customInvoiceNo || generateInvoiceNo(branch?.name.slice(0, 3) || 'POS')
+
+    // Cek duplikat invoiceNo (kalau webhook sudah proses duluan)
+    const existing = await fastify.prisma.transaction.findUnique({
+      where: { invoiceNo }
+    })
+    if (existing) return reply.send(existing)
 
     const transaction = await fastify.prisma.$transaction(async (tx) => {
-      // Buat transaksi
       const newTransaction = await tx.transaction.create({
         data: {
           invoiceNo,
@@ -164,20 +164,15 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
           paymentMethod: paymentMethod as any,
           amountPaid,
           change,
-          items: {
-            create: transactionItems
-          }
+          items: { create: transactionItems }
         },
         include: {
-          items: {
-            include: { product: true }
-          },
+          items: { include: { product: true } },
           user: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } }
         }
       })
 
-      // Update stok semua produk
       for (const item of items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -200,21 +195,13 @@ export default async function transactionRoutes(fastify: FastifyInstance) {
       include: { items: true }
     })
 
-    if (!transaction) {
-      return reply.status(404).send({ error: 'Transaction not found' })
-    }
-
+    if (!transaction) return reply.status(404).send({ error: 'Transaction not found' })
     if (transaction.status !== 'COMPLETED') {
       return reply.status(400).send({ error: 'Only completed transactions can be cancelled' })
     }
 
-    // Cancel + kembalikan stok
     await fastify.prisma.$transaction(async (tx) => {
-      await tx.transaction.update({
-        where: { id },
-        data: { status: 'CANCELLED' }
-      })
-
+      await tx.transaction.update({ where: { id }, data: { status: 'CANCELLED' } })
       for (const item of transaction.items) {
         await tx.product.update({
           where: { id: item.productId },

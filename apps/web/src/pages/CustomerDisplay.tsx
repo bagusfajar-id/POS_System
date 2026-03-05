@@ -23,6 +23,13 @@ interface CartData {
   branchName: string
 }
 
+interface QrisData {
+  orderId: string
+  amount: number
+  qrUrl: string | null
+  qrString: string | null
+}
+
 const formatRupiah = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
     style: 'currency', currency: 'IDR', minimumFractionDigits: 0
@@ -67,12 +74,31 @@ function ProductImage({ item, size = 52 }: { item: CartItem; size?: number }) {
   )
 }
 
+// QR Code generator menggunakan QR Server API (tidak perlu package)
+function QRCodeDisplay({ value, size = 240 }: { value: string; size?: number }) {
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(value)}&bgcolor=ffffff&color=000000&margin=10`
+  return (
+    <img
+      src={qrUrl}
+      alt="QR Code QRIS"
+      style={{
+        width: size, height: size,
+        borderRadius: 16,
+        border: '8px solid white',
+        boxShadow: '0 0 40px rgba(108,99,255,0.4)',
+      }}
+    />
+  )
+}
+
 export default function CustomerDisplay() {
   const [cart, setCart] = useState<CartData | null>(null)
   const [connected, setConnected] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [paid, setPaid] = useState(false)
   const [time, setTime] = useState(new Date())
+  const [qrisData, setQrisData] = useState<QrisData | null>(null)
+  const [qrisSuccess, setQrisSuccess] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -89,20 +115,76 @@ export default function CustomerDisplay() {
       wsRef.current = ws
 
       ws.onopen = () => setConnected(true)
+
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as CartData
+          const data = JSON.parse(event.data)
           setLastUpdate(new Date())
-          if (data.type === 'cart_clear' || (data.items && data.items.length === 0)) {
+
+          // ===== QRIS: tampilkan QR di display =====
+          if (data.type === 'qris_payment') {
+            setQrisData({
+              orderId: data.orderId,
+              amount: data.amount,
+              qrUrl: data.qrUrl,
+              qrString: data.qrString,
+            })
+            setQrisSuccess(false)
+            setPaid(false)
+            return
+          }
+
+          // ===== QRIS: pembayaran berhasil =====
+          if (data.type === 'qris_success') {
+            setQrisData(null)
+            setQrisSuccess(true)
+            // Setelah 1.5 detik tampilkan layar "Pembayaran Berhasil"
+            setTimeout(() => {
+              setQrisSuccess(false)
+              setPaid(true)
+              setTimeout(() => setPaid(false), 5000)
+            }, 1500)
+            return
+          }
+
+          // ===== QRIS: gagal/expired =====
+          if (data.type === 'qris_failed' || data.type === 'qris_cancelled') {
+            setQrisData(null)
+            return
+          }
+
+          // ===== Cart update biasa =====
+          if (data.type === 'cart_update') {
+            setQrisData(null) // reset QR kalau ada update cart baru
+            if (data.items && data.items.length > 0) {
+              setCart(data)
+              setPaid(false)
+            } else {
+              setCart(null)
+            }
+            return
+          }
+
+          // ===== Payment success (CASH/TRANSFER/CARD) =====
+          if (data.type === 'payment_success') {
             setCart(null)
-            setPaid(data.type === 'payment_success')
-            if (data.type === 'payment_success') setTimeout(() => setPaid(false), 5000)
-          } else {
+            setQrisData(null)
+            setPaid(true)
+            setTimeout(() => setPaid(false), 5000)
+            return
+          }
+
+          // Fallback
+          if (data.items && data.items.length > 0) {
             setCart(data)
             setPaid(false)
+          } else if (data.items && data.items.length === 0) {
+            setCart(null)
           }
+
         } catch (e) { console.error(e) }
       }
+
       ws.onclose = () => { setConnected(false); setTimeout(connect, 3000) }
       ws.onerror = () => ws.close()
     }
@@ -122,6 +204,9 @@ export default function CustomerDisplay() {
         @keyframes fadeSlideIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
         @keyframes successPop { 0% { transform:scale(0.5); opacity:0; } 70% { transform:scale(1.1); } 100% { transform:scale(1); opacity:1; } }
+        @keyframes qrPop { 0% { transform:scale(0.8); opacity:0; } 60% { transform:scale(1.05); } 100% { transform:scale(1); opacity:1; } }
+        @keyframes scanLine { 0% { top:10%; } 100% { top:90%; } }
+        @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
         .item-row { animation: fadeSlideIn 0.3s ease forwards; }
       `}</style>
 
@@ -180,8 +265,29 @@ export default function CustomerDisplay() {
       {/* Content */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-        {/* Payment Success */}
-        {paid ? (
+        {/* ===== QRIS SUCCESS ANIMATION ===== */}
+        {qrisSuccess ? (
+          <div style={{
+            flex: 1, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 24,
+            background: 'radial-gradient(ellipse at center, rgba(67,233,123,0.12) 0%, transparent 70%)',
+          }}>
+            <div style={{ fontSize: 80, animation: 'successPop 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards' }}>✅</div>
+            <div style={{ textAlign: 'center', animation: 'fadeSlideIn 0.4s 0.2s ease both' }}>
+              <div style={{ fontSize: 40, fontWeight: 800, color: '#43e97b', marginBottom: 8 }}>
+                QRIS Terkonfirmasi!
+              </div>
+              <div style={{ fontSize: 16, color: '#6b6b80' }}>Memproses transaksi...</div>
+            </div>
+            <div style={{
+              width: 40, height: 40, border: '3px solid #43e97b',
+              borderTopColor: 'transparent', borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+            }} />
+          </div>
+
+        ) : paid ? (
+          /* ===== PAYMENT SUCCESS ===== */
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 28,
@@ -198,7 +304,134 @@ export default function CustomerDisplay() {
             </div>
           </div>
 
+        ) : qrisData ? (
+          /* ===== QRIS QR CODE DISPLAY ===== */
+          <div style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'radial-gradient(ellipse at center, rgba(108,99,255,0.08) 0%, transparent 70%)',
+            gap: 60, padding: 40,
+          }}>
+            {/* Kiri: info pembayaran */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 320 }}>
+              <div>
+                <div style={{ fontSize: 13, color: '#6b6b80', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                  Total Pembayaran
+                </div>
+                <div style={{
+                  fontSize: 44, fontWeight: 800, color: '#43e97b',
+                  fontFamily: "'DM Mono', monospace", letterSpacing: -1,
+                }}>
+                  {formatRupiah(qrisData.amount)}
+                </div>
+              </div>
+
+              <div style={{
+                background: 'rgba(108,99,255,0.08)', border: '1px solid rgba(108,99,255,0.2)',
+                borderRadius: 14, padding: '14px 18px',
+              }}>
+                <div style={{ fontSize: 12, color: '#6b6b80', marginBottom: 6 }}>📱 Cara Pembayaran</div>
+                <div style={{ fontSize: 14, color: '#e8e8f0', lineHeight: 1.8 }}>
+                  1. Buka aplikasi e-wallet/bank<br />
+                  2. Pilih fitur <strong>Scan QR</strong><br />
+                  3. Arahkan kamera ke QR Code<br />
+                  4. Konfirmasi pembayaran
+                </div>
+              </div>
+
+              <div style={{
+                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 12, padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: '50%', background: '#43e97b',
+                  animation: 'pulse 1.5s infinite',
+                }} />
+                <span style={{ fontSize: 13, color: '#6b6b80' }}>
+                  Menunggu konfirmasi pembayaran...
+                </span>
+              </div>
+
+              <div style={{ fontSize: 12, color: '#3a3a4a' }}>
+                Order ID: {qrisData.orderId}
+              </div>
+            </div>
+
+            {/* Kanan: QR Code */}
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+              animation: 'qrPop 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            }}>
+              {/* Label QRIS */}
+              <div style={{
+                background: 'linear-gradient(135deg, #6c63ff, #a78bfa)',
+                borderRadius: 12, padding: '8px 24px',
+                fontSize: 18, fontWeight: 800, color: 'white',
+                letterSpacing: 2,
+              }}>
+                📱 QRIS
+              </div>
+
+              {/* QR Code */}
+              <div style={{ position: 'relative' }}>
+                {qrisData.qrString ? (
+                  <QRCodeDisplay value={qrisData.qrString} size={260} />
+                ) : qrisData.qrUrl ? (
+                  <img
+                    src={qrisData.qrUrl}
+                    alt="QRIS QR Code"
+                    style={{
+                      width: 260, height: 260, borderRadius: 16,
+                      border: '8px solid white',
+                      boxShadow: '0 0 40px rgba(108,99,255,0.4)',
+                    }}
+                  />
+                ) : (
+                  <div style={{
+                    width: 260, height: 260, borderRadius: 16,
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexDirection: 'column', gap: 12,
+                  }}>
+                    <div style={{
+                      width: 40, height: 40, border: '3px solid #6c63ff',
+                      borderTopColor: 'transparent', borderRadius: '50%',
+                      animation: 'spin 0.8s linear infinite',
+                    }} />
+                    <span style={{ color: '#6b6b80', fontSize: 13 }}>Memuat QR...</span>
+                  </div>
+                )}
+
+                {/* Scan line animation */}
+                <div style={{
+                  position: 'absolute', left: 8, right: 8,
+                  height: 2, background: 'linear-gradient(90deg, transparent, #43e97b, transparent)',
+                  animation: 'scanLine 2s ease-in-out infinite alternate',
+                  boxShadow: '0 0 8px #43e97b',
+                }} />
+              </div>
+
+              <div style={{ fontSize: 13, color: '#6b6b80', textAlign: 'center' }}>
+                Scan dengan aplikasi QRIS manapun
+              </div>
+
+              {/* Logo e-wallet */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {['GoPay', 'OVO', 'Dana', 'ShopeePay', 'LinkAja', 'BCA'].map(w => (
+                  <span key={w} style={{
+                    fontSize: 11, color: '#4a4a5a',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    borderRadius: 6, padding: '3px 8px',
+                  }}>{w}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+
         ) : cart && cart.items?.length > 0 ? (
+          /* ===== CART VIEW ===== */
           <>
             {/* Items Panel */}
             <div style={{ flex: 1, padding: '20px 16px 20px 28px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -248,31 +481,20 @@ export default function CustomerDisplay() {
                       animationDelay: `${i * 0.05}s`,
                     }}
                   >
-                    {/* Gambar produk */}
                     <ProductImage item={item} size={52} />
-
-                    {/* Nama */}
                     <span style={{ fontSize: 15, fontWeight: 600, color: '#e8e8f0' }}>{item.name}</span>
-
-                    {/* Harga */}
-                    <span style={{
-                      fontSize: 13, color: '#6b6b80', textAlign: 'right',
-                      fontFamily: "'DM Mono', monospace",
-                    }}>{formatRupiah(item.price)}</span>
-
-                    {/* Qty */}
+                    <span style={{ fontSize: 13, color: '#6b6b80', textAlign: 'right', fontFamily: "'DM Mono', monospace" }}>
+                      {formatRupiah(item.price)}
+                    </span>
                     <div style={{
                       background: 'linear-gradient(135deg, #6c63ff, #a78bfa)',
                       borderRadius: 20, padding: '4px 0',
                       textAlign: 'center', fontWeight: 800, fontSize: 14, color: 'white',
                       boxShadow: '0 2px 8px rgba(108,99,255,0.3)',
                     }}>{item.quantity}</div>
-
-                    {/* Subtotal */}
-                    <span style={{
-                      fontSize: 15, fontWeight: 700, color: '#43e97b',
-                      textAlign: 'right', fontFamily: "'DM Mono', monospace",
-                    }}>{formatRupiah(item.subtotal)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#43e97b', textAlign: 'right', fontFamily: "'DM Mono', monospace" }}>
+                      {formatRupiah(item.subtotal)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -280,7 +502,6 @@ export default function CustomerDisplay() {
 
             {/* Right Panel */}
             <div style={{ width: 300, padding: '20px 28px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {/* Kasir info */}
               {cart.kasirName && (
                 <div style={{
                   background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
@@ -302,7 +523,6 @@ export default function CustomerDisplay() {
                 </div>
               )}
 
-              {/* Summary */}
               <div style={{
                 background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
                 borderRadius: 14, padding: 16, flex: 1,
@@ -322,19 +542,18 @@ export default function CustomerDisplay() {
                 ))}
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 14, marginTop: 6 }}>
                   <div style={{ fontSize: 11, color: '#6b6b80', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.8 }}>Total</div>
-                  <div style={{
-                    fontSize: 32, fontWeight: 800, color: '#43e97b',
-                    letterSpacing: -0.5, fontFamily: "'DM Mono', monospace",
-                  }}>
+                  <div style={{ fontSize: 32, fontWeight: 800, color: '#43e97b', letterSpacing: -0.5, fontFamily: "'DM Mono', monospace" }}>
                     {formatRupiah(cart.total)}
                   </div>
                 </div>
               </div>
 
-              {/* Payment method */}
               {cart.paymentMethod && (
                 <div style={{
-                  background: 'rgba(108,99,255,0.08)', border: '1px solid rgba(108,99,255,0.15)',
+                  background: cart.paymentMethod === 'QRIS'
+                    ? 'rgba(108,99,255,0.12)'
+                    : 'rgba(108,99,255,0.08)',
+                  border: `1px solid ${cart.paymentMethod === 'QRIS' ? 'rgba(108,99,255,0.3)' : 'rgba(108,99,255,0.15)'}`,
                   borderRadius: 12, padding: '12px 16px',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 }}>
@@ -345,7 +564,6 @@ export default function CustomerDisplay() {
                 </div>
               )}
 
-              {/* Total items */}
               <div style={{
                 background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
                 borderRadius: 12, padding: '12px 16px',
@@ -360,7 +578,7 @@ export default function CustomerDisplay() {
           </>
 
         ) : (
-          /* Idle */
+          /* ===== IDLE ===== */
           <div style={{
             flex: 1, display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 20,
